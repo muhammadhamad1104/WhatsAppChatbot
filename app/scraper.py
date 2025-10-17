@@ -178,23 +178,36 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             # Step 1: Go to login page
             logger.info(f"🌐 Opening login page: {VEEX_LOGIN_URL}")
             page.goto(VEEX_LOGIN_URL, timeout=timeout)
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("networkidle", timeout=timeout)
+            
+            # Give Angular time to initialize
+            page.wait_for_timeout(3000)
+            logger.info("✅ Page loaded, waiting for login form...")
 
             # Step 2: Enter credentials - use placeholder-based selectors
             logger.info("🔑 Logging in...")
             
             # VeEX login form uses placeholder attributes instead of name/id
             try:
+                # Wait for username field to be visible and ready
+                username_field = page.locator('input[placeholder="Username"]')
+                username_field.wait_for(state="visible", timeout=timeout)
+                logger.info("✅ Username field found")
+                
                 # Fill username (first input with placeholder="Username")
-                page.fill('input[placeholder="Username"]', VEEX_USERNAME)
+                username_field.fill(VEEX_USERNAME, timeout=timeout)
                 logger.info("✅ Filled username field")
                 
+                # Wait for password field
+                password_field = page.locator('input[placeholder="Password"]')
+                password_field.wait_for(state="visible", timeout=timeout)
+                
                 # Fill password (input with placeholder="Password")
-                page.fill('input[placeholder="Password"]', VEEX_PASSWORD)
+                password_field.fill(VEEX_PASSWORD, timeout=timeout)
                 logger.info("✅ Filled password field")
                 
                 # Submit form by pressing Enter on password field (no button exists)
-                page.locator('input[placeholder="Password"]').press("Enter")
+                password_field.press("Enter")
                 logger.info("✅ Submitted login form")
                 
             except Exception as e:

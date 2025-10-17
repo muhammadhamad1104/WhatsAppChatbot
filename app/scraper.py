@@ -306,28 +306,51 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             current_url = page.url
             logger.info(f"📍 Current URL after login: {current_url}")
             
-            # Check if we're still on login page (login failed)
-            if 'login' in current_url.lower():
-                logger.error("❌ Still on login page - credentials may be incorrect")
-                page_text = page.content()[:500]
-                logger.error(f"Page content: {page_text}")
-                raise Exception("Login failed - still on login page")
+            # For SPA, the URL might not change, so check for dashboard elements instead
+            logger.info("⏳ Waiting for dashboard to load...")
+            page.wait_for_timeout(5000)  # Give dashboard time to render
             
-            # If we got redirected anywhere else, assume login success
-            logger.info("✅ Login successful - redirected from login page!")
-
+            # Look for navigation menu or dashboard elements
+            nav_visible = page.locator('nav, [role="navigation"], .navigation, .menu').count() > 0
+            if nav_visible:
+                logger.info("✅ Dashboard loaded - navigation menu found")
+            else:
+                logger.warning("⚠️ No navigation menu found, but proceeding...")
 
             # Step 4: Navigate to results view by CLICKING (SPA navigation, not page.goto)
             logger.info("📄 Opening results page...")
-            try:
-                # This is a Single Page Application - must click navigation link, not use goto()
-                page.locator('text="View Result List"').click()
-                page.wait_for_timeout(3000)  # Wait for Angular to load content
-                logger.info("✅ Clicked 'View Result List'")
-            except Exception as e:
-                logger.warning(f"⚠ Could not click 'View Result List': {e}, trying direct URL...")
+            
+            # Try multiple variations of the "View Result List" link
+            result_list_selectors = [
+                'text="View Result List"',
+                'text="Result List"',
+                'text="Results"',
+                'a:has-text("View Result List")',
+                'a:has-text("Result")',
+                '[href*="result"]',
+                '[href*="Result"]'
+            ]
+            
+            clicked = False
+            for selector in result_list_selectors:
+                try:
+                    logger.info(f"Trying to click: {selector}")
+                    element = page.locator(selector).first
+                    element.wait_for(state="visible", timeout=10000)
+                    element.click()
+                    page.wait_for_timeout(5000)  # Wait for Angular to load content
+                    logger.info(f"✅ Clicked '{selector}'")
+                    clicked = True
+                    break
+                except Exception as e:
+                    logger.info(f"Selector {selector} failed: {str(e)[:100]}")
+                    continue
+            
+            if not clicked:
+                logger.warning("⚠ Could not click any navigation link, trying direct URL...")
                 page.goto(VEEX_RESULTS_URL, timeout=timeout)
                 page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(5000)
             
             # Wait for table to load - be more specific
             try:

@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: whatsapp-veex-bot
+    env: python
+    buildCommand: pip install -r requirements.txt && python -m playwright install chromium --with-deps
+    startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.0
+      - key: PORT
+        value: 8000
+      - key: DEBUG_MODE
+        value: false
+    # Environment variables to be set in Render dashboard:
+    # TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER
+    # VEEX_USERNAME, VEEX_PASSWORD, VEEX_LOGIN_URL

@@ -181,28 +181,78 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             page.wait_for_load_state("networkidle", timeout=timeout)
             
             # Give Angular time to initialize
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(5000)  # Increased to 5 seconds
             logger.info("✅ Page loaded, waiting for login form...")
+            
+            # Debug: Log page content to see what's actually there
+            page_content = page.content()
+            if 'placeholder="Username"' in page_content:
+                logger.info("✅ Username placeholder found in page HTML")
+            else:
+                logger.warning("⚠️ Username placeholder NOT found in page HTML")
+                # Log first 1000 chars of page to see what we got
+                logger.info(f"Page content preview: {page_content[:1000]}")
 
             # Step 2: Enter credentials - use placeholder-based selectors
             logger.info("🔑 Logging in...")
             
             # VeEX login form uses placeholder attributes instead of name/id
             try:
-                # Wait for username field to be visible and ready
-                username_field = page.locator('input[placeholder="Username"]')
-                username_field.wait_for(state="visible", timeout=timeout)
-                logger.info("✅ Username field found")
+                # Try multiple selector strategies
+                username_field = None
+                selectors_to_try = [
+                    'input[placeholder="Username"]',
+                    'input[type="text"]',
+                    'input[name="username"]',
+                    'input#username',
+                    'input[formcontrolname="username"]'
+                ]
                 
-                # Fill username (first input with placeholder="Username")
+                for selector in selectors_to_try:
+                    try:
+                        logger.info(f"Trying selector: {selector}")
+                        field = page.locator(selector).first
+                        field.wait_for(state="attached", timeout=10000)
+                        if field.is_visible():
+                            username_field = field
+                            logger.info(f"✅ Username field found with selector: {selector}")
+                            break
+                    except Exception as sel_error:
+                        logger.info(f"Selector {selector} failed: {sel_error}")
+                        continue
+                
+                if not username_field:
+                    raise Exception("Could not find username field with any selector")
+                
+                # Fill username
                 username_field.fill(VEEX_USERNAME, timeout=timeout)
                 logger.info("✅ Filled username field")
                 
-                # Wait for password field
-                password_field = page.locator('input[placeholder="Password"]')
-                password_field.wait_for(state="visible", timeout=timeout)
+                # Try multiple selectors for password
+                password_field = None
+                password_selectors = [
+                    'input[placeholder="Password"]',
+                    'input[type="password"]',
+                    'input[name="password"]',
+                    'input#password',
+                    'input[formcontrolname="password"]'
+                ]
                 
-                # Fill password (input with placeholder="Password")
+                for selector in password_selectors:
+                    try:
+                        field = page.locator(selector).first
+                        field.wait_for(state="attached", timeout=10000)
+                        if field.is_visible():
+                            password_field = field
+                            logger.info(f"✅ Password field found with selector: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if not password_field:
+                    raise Exception("Could not find password field with any selector")
+                
+                # Fill password
                 password_field.fill(VEEX_PASSWORD, timeout=timeout)
                 logger.info("✅ Filled password field")
                 

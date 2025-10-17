@@ -83,6 +83,7 @@ def webhook():
 
 if __name__ == "__main__":
     host = os.getenv("FLASK_HOST", "0.0.0.0")
-    port = int(os.getenv("FLASK_PORT", 8000))
+    # Railway uses PORT, local uses FLASK_PORT
+    port = int(os.getenv("PORT", os.getenv("FLASK_PORT", 8000)))
     logger.info(f"🚀 Starting WhatsApp VeEX Bot on {host}:{port}")
     app.run(host=host, port=port, debug=False)

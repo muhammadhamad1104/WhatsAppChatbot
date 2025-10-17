@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+from urllib.parse import unquote
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
@@ -14,7 +15,8 @@ VEEX_LOGIN_URL = os.getenv("VEEX_LOGIN_URL", "https://charter.veexinc.net/")
 VEEX_DASHBOARD_URL = "https://charter.veexinc.net/home/dashboard"
 VEEX_RESULTS_URL = "https://charter.veexinc.net/home/result-and-report/view"
 VEEX_USERNAME = os.getenv("VEEX_USERNAME")
-VEEX_PASSWORD = os.getenv("VEEX_PASSWORD")
+# Handle URL-encoded password (e.g., %23 for # character)
+VEEX_PASSWORD = unquote(os.getenv("VEEX_PASSWORD", "")) if os.getenv("VEEX_PASSWORD") else None
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 

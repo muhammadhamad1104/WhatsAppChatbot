@@ -354,28 +354,58 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
                     
                     # Now wait for content to actually load - Angular needs time
                     logger.info("⏳ Waiting for table content to render...")
-                    page.wait_for_timeout(30000)  # Much longer wait for table to render
+                    page.wait_for_timeout(15000)  # Initial wait
                     
-                    # Try to trigger any lazy-loading by scrolling
-                    try:
-                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        page.wait_for_timeout(30000)
-                        page.evaluate("window.scrollTo(0, 0)")
-                        logger.info("✅ Scrolled page to trigger lazy-loading")
-                    except:
-                        pass
+                    # CRITICAL: Look for and handle pagination/infinite scroll/load more buttons
+                    logger.info("🔍 Looking for data loading mechanisms...")
                     
-                    # Try clicking any "Load" or "Refresh" buttons that might exist
-                    try:
-                        refresh_selectors = ['button:has-text("Load")', 'button:has-text("Refresh")', 'button:has-text("Search")']
-                        for selector in refresh_selectors:
-                            if page.locator(selector).count() > 0:
-                                page.locator(selector).first.click()
-                                logger.info(f"✅ Clicked {selector}")
+                    # Try to find and click "Load More", "Show All", pagination, etc.
+                    load_more_selectors = [
+                        'button:has-text("Load More")',
+                        'button:has-text("Show All")',
+                        'button:has-text("View All")',
+                        'a:has-text("Load More")',
+                        '[class*="load-more"]',
+                        '[class*="show-all"]',
+                        'button[class*="pagination"]',
+                        '.pagination a:last-child',  # Last page button
+                        'button:has-text("100")',  # Items per page = 100
+                        'select option:has-text("100")',  # Dropdown to show 100 items
+                    ]
+                    
+                    for selector in load_more_selectors:
+                        try:
+                            elements = page.locator(selector)
+                            count = elements.count()
+                            if count > 0:
+                                logger.info(f"Found '{selector}' - clicking...")
+                                elements.first.click()
                                 page.wait_for_timeout(5000)
-                                break
+                                logger.info(f"✅ Clicked {selector}")
+                        except Exception as e:
+                            pass
+                    
+                    # Scroll multiple times to trigger infinite scroll
+                    logger.info("📜 Scrolling to trigger infinite scroll/lazy loading...")
+                    for scroll_attempt in range(5):
+                        try:
+                            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            page.wait_for_timeout(3000)
+                            logger.info(f"Scroll {scroll_attempt + 1}/5")
+                        except:
+                            pass
+                    
+                    # Scroll back to top
+                    try:
+                        page.evaluate("window.scrollTo(0, 0)")
+                        page.wait_for_timeout(2000)
                     except:
                         pass
+                    
+                    logger.info("✅ Completed loading triggers")
+                    
+                    # Final long wait for all data to load
+                    page.wait_for_timeout(10000)
                 
                 # If still on root, try direct goto as last resort
                 elif current_url == "https://charter.veexinc.net/":
@@ -434,22 +464,52 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             else:
                 logger.info(f"✅ Found {table_count} table(s) on page")
             
-            # Try to use search/filter if available
+            # Try to use search/filter if available - THIS IS CRITICAL
+            logger.info(f"🔍 Attempting to search for Job ID: {job_id}")
+            search_success = False
+            
             try:
-                # Look in the "Result List" area for a search box
-                search_button = page.locator('button:has-text("Search")')
-                if search_button.count() > 0:
-                    logger.info(f"🔍 Found search button, trying to search for {job_id}")
-                    # Try to find input box near the search button
-                    search_inputs = page.locator('input[type="text"]')
-                    if search_inputs.count() > 0:
-                        # Use the last input (usually the main search)
-                        search_inputs.last.fill(job_id)
-                        search_button.first.click()
-                        page.wait_for_timeout(5000)  # Increased wait for search results
-                        logger.info("✅ Search completed")
+                # Strategy 1: Look for any visible input fields and try searching
+                all_inputs = page.locator('input[type="text"], input[type="search"], input:not([type])')
+                input_count = all_inputs.count()
+                logger.info(f"Found {input_count} input fields")
+                
+                if input_count > 0:
+                    # Try each input field
+                    for i in range(input_count):
+                        try:
+                            input_field = all_inputs.nth(i)
+                            if input_field.is_visible():
+                                logger.info(f"Trying input field {i+1}/{input_count}")
+                                input_field.fill(job_id)
+                                page.wait_for_timeout(1000)
+                                
+                                # Try pressing Enter
+                                input_field.press("Enter")
+                                page.wait_for_timeout(5000)
+                                logger.info(f"✅ Searched via input {i+1} (Enter key)")
+                                search_success = True
+                                break
+                        except:
+                            continue
+                
+                # Strategy 2: Look for Search button and click it
+                if not search_success:
+                    search_buttons = page.locator('button:has-text("Search"), button[type="submit"], input[type="submit"]')
+                    if search_buttons.count() > 0:
+                        logger.info("Found search button, clicking...")
+                        search_buttons.first.click()
+                        page.wait_for_timeout(5000)
+                        logger.info("✅ Clicked search button")
+                        search_success = True
+                
+                if search_success:
+                    # Wait for search results
+                    logger.info("⏳ Waiting for search results...")
+                    page.wait_for_timeout(10000)
                 else:
-                    logger.info("ℹ️ No search button found, will scan full table")
+                    logger.info("ℹ️ No search mechanism found, will scan full table")
+                    
             except Exception as e:
                 logger.warning(f"⚠ Search error: {e}, will scan full table")
 

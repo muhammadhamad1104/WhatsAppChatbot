@@ -44,6 +44,14 @@ def webhook():
     # Twilio sends application/x-www-form-urlencoded by default
     from_number = request.form.get("From")  # e.g., 'whatsapp:+92300...'
     body = request.form.get("Body", "").strip()
+    
+    # Sanitize phone number format (remove spaces, ensure + is present)
+    if from_number:
+        from_number = from_number.replace(" ", "")  # Remove any spaces
+        if from_number.startswith("whatsapp:") and not from_number.startswith("whatsapp:+"):
+            # Add missing + sign after whatsapp:
+            from_number = from_number.replace("whatsapp:", "whatsapp:+")
+    
     logger.info("📩 Incoming message from %s: %s", from_number, body)
 
     if not body:

@@ -168,21 +168,56 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
     
     with sync_playwright() as p:
         try:
-            browser = p.chromium.launch(headless=headless)
-            context = browser.new_context(
-                user_agent=USER_AGENT,
-                viewport={"width": 1920, "height": 1080}
+            # Launch browser with more realistic settings to avoid detection
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu'
+                ]
             )
+            
+            # Create context with realistic browser settings
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={"width": 1920, "height": 1080},
+                locale='en-US',
+                timezone_id='America/New_York',
+                permissions=[],
+                extra_http_headers={
+                    'Accept-Language': 'en-US,en;q=0.9',
+                }
+            )
+            
+            # Add JavaScript to make the browser look less like a bot
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
             page = context.new_page()
 
             # Step 1: Go to login page
             logger.info(f"🌐 Opening login page: {VEEX_LOGIN_URL}")
             page.goto(VEEX_LOGIN_URL, timeout=timeout)
-            page.wait_for_load_state("networkidle", timeout=timeout)
             
-            # Give Angular time to initialize
-            page.wait_for_timeout(5000)  # Increased to 5 seconds
-            logger.info("✅ Page loaded, waiting for login form...")
+            # Wait for different load states to ensure Angular app loads
+            page.wait_for_load_state("domcontentloaded", timeout=timeout)
+            logger.info("✅ DOM loaded")
+            
+            page.wait_for_load_state("networkidle", timeout=timeout)
+            logger.info("✅ Network idle")
+            
+            # Give Angular extra time to initialize and render
+            logger.info("⏳ Waiting for Angular to initialize...")
+            page.wait_for_timeout(10000)  # Increased to 10 seconds
+            logger.info("✅ Page loaded, looking for login form...")
+            
+            # Check if any input fields exist at all
+            all_inputs = page.locator('input').count()
+            logger.info(f"📊 Found {all_inputs} input fields on page")
             
             # Debug: Log page content to see what's actually there
             page_content = page.content()

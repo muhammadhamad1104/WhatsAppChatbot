@@ -16,6 +16,18 @@ logger = logging.getLogger("whatsapp_veex_bot")
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "verify_token_default")
 
+@app.route("/", methods=["GET"])
+def home():
+    """Root endpoint to verify app is running"""
+    return jsonify({
+        "status": "online",
+        "service": "WhatsApp VeEX Bot",
+        "endpoints": {
+            "health": "/health",
+            "webhook": "/webhook"
+        }
+    }), 200
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()}), 200

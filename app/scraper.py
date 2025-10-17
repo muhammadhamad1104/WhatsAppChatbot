@@ -348,11 +348,40 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
                 current_url = page.url
                 logger.info(f"📍 URL after Angular navigation: {current_url}")
                 
+                # If URL contains the results route, we're on the right page
+                if "result" in current_url.lower():
+                    logger.info("✅ Navigation successful - on results page")
+                    
+                    # Now wait for content to actually load - Angular needs time
+                    logger.info("⏳ Waiting for table content to render...")
+                    page.wait_for_timeout(30000)  # Much longer wait for table to render
+                    
+                    # Try to trigger any lazy-loading by scrolling
+                    try:
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        page.wait_for_timeout(30000)
+                        page.evaluate("window.scrollTo(0, 0)")
+                        logger.info("✅ Scrolled page to trigger lazy-loading")
+                    except:
+                        pass
+                    
+                    # Try clicking any "Load" or "Refresh" buttons that might exist
+                    try:
+                        refresh_selectors = ['button:has-text("Load")', 'button:has-text("Refresh")', 'button:has-text("Search")']
+                        for selector in refresh_selectors:
+                            if page.locator(selector).count() > 0:
+                                page.locator(selector).first.click()
+                                logger.info(f"✅ Clicked {selector}")
+                                page.wait_for_timeout(5000)
+                                break
+                    except:
+                        pass
+                
                 # If still on root, try direct goto as last resort
-                if current_url == "https://charter.veexinc.net/" or "result" not in current_url.lower():
+                elif current_url == "https://charter.veexinc.net/":
                     logger.warning("⚠️ Angular navigation didn't work, trying direct URL...")
                     page.goto(VEEX_RESULTS_URL, wait_until="domcontentloaded", timeout=timeout)
-                    page.wait_for_timeout(15000)  # Longer wait
+                    page.wait_for_timeout(20000)  # Longer wait
                     
                     # Check URL again
                     current_url = page.url
@@ -365,14 +394,22 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
                 page.goto(VEEX_DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout)
                 page.wait_for_timeout(8000)
                 page.goto(VEEX_RESULTS_URL, wait_until="domcontentloaded", timeout=timeout)
-                page.wait_for_timeout(15000)
+                page.wait_for_timeout(20000)
             
-            # Wait for table to load - be more specific
-            try:
-                page.wait_for_selector('table', timeout=10000)
-                logger.info("✅ Table loaded")
-            except:
-                logger.warning("⚠ Could not detect table element")
+            # Wait for table to load - try multiple times with different selectors
+            table_loaded = False
+            table_selectors = ['table', 'mat-table', 'div[role="table"]', '.table', '[class*="table"]']
+            for selector in table_selectors:
+                try:
+                    page.wait_for_selector(selector, timeout=15000)
+                    logger.info(f"✅ Table loaded (selector: {selector})")
+                    table_loaded = True
+                    break
+                except:
+                    continue
+            
+            if not table_loaded:
+                logger.warning("⚠ Could not detect table element with any selector")
             
             # Additional wait for dynamic content (Angular needs time to render)
             logger.info("⏳ Waiting for content to fully load...")

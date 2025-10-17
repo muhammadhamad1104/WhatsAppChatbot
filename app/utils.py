@@ -8,44 +8,48 @@ logger = logging.getLogger(__name__)
 def format_job_response(job_id: str, job_data: dict) -> str:
     """
     Format job data into a clean WhatsApp message.
-    Matches the format shown in the client's screenshot.
+    Matches the format shown in the client's example.
     """
     if not job_data.get("success"):
         return f"❌ {job_data.get('message', 'Job not found')}"
     
+    # Get overall status
+    overall_status = job_data.get('overall_status', 'PASS')
+    status_emoji = "✅" if overall_status == "PASS" else "❌"
+    
     # Build formatted message matching the client's example
     message = f"""Job ID uploaded correctly. Please proceed with closing the job.😎
 
-Overall Status: PASS ✅
+Overall Status: {overall_status} {status_emoji}
 
 Job ID: {job_data.get('job_id', job_id)}
 Account: {job_data.get('account', 'N/A')}
 
-Cable Type: 🔌 {job_data.get('type', 'COAX')}
+Cable Type: 🔌 {job_data.get('cable_type', 'N/A')}
 
 Date Uploaded: {job_data.get('date_uploaded', 'N/A')}
-Date Measured: {job_data.get('date_measured', 'N/A')}
+Date Measured: {job_data.get('test_type', 'N/A')}
 
 Technician: {job_data.get('technician', 'N/A')}
-Company: {job_data.get('company', 'N/A')}
+Company: {job_data.get('test_set', 'N/A')}
 
 Component Status:
 """
     
-    # Add component statuses
-    components = job_data.get('components', {})
-    if components:
-        for component, status in components.items():
+    # Add component statuses from parsed data
+    component_status = job_data.get('component_status', {})
+    if component_status:
+        for component, status in component_status.items():
             message += f"{component}: {status}\n"
     else:
         # Default components if not extracted
-        message += f"tap: ✅ Passed\n"
-        message += f"gnb BI: ✅ Passed\n"
-        message += f"Cpe: ✅ Passed\n"
+        message += f"tap: ➖ Missing\n"
+        message += f"gnb_BI: ➖ Missing\n"
+        message += f"Cpe: ➖ Missing\n"
         message += f"Pressure test: ➖ Missing\n"
         message += f"TDR: ➖ Missing\n"
     
-    return message
+    return message.strip()
 
 
 def handle_general_query(query: str) -> str:

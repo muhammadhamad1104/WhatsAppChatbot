@@ -2,7 +2,6 @@ import os
 import time
 import logging
 from dotenv import load_dotenv
-from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 load_dotenv()
@@ -20,157 +19,20 @@ VEEX_PASSWORD = os.getenv("VEEX_PASSWORD")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # -----------------------------------------
-# Utility Functions
-# -----------------------------------------
-def parse_job_html(job_id: str, html: str) -> dict:
-    """
-    Extract detailed job information from HTML content.
-    Returns a structured dictionary matching the client's required format.
-    """
-    soup = BeautifulSoup(html, "lxml")
-    
-    # Find the row containing the job ID - search more carefully
-    job_row = None
-    
-    # Try multiple search strategies
-    # Strategy 1: Look in table cells
-    for row in soup.find_all("tr"):
-        cells = row.find_all("td")
-        for cell in cells:
-            cell_text = cell.get_text(strip=True)
-            # Check if job ID matches (even partially, in case of formatting)
-            if job_id in cell_text.replace(" ", "").replace("\n", ""):
-                job_row = row
-                logger.info(f"Found Job ID in row: {cell_text}")
-                break
-        if job_row:
-            break
-    
-    # Strategy 2: If not found, search in entire row text
-    if not job_row:
-        for row in soup.find_all("tr"):
-            row_text = row.get_text(strip=True).replace(" ", "").replace("\n", "")
-            if job_id in row_text:
-                job_row = row
-                logger.info(f"Found Job ID in row text")
-                break
-    
-    if not job_row:
-        logger.warning(f"Job ID {job_id} not found in HTML")
-        # Log first few table rows for debugging
-        all_rows = soup.find_all("tr")
-        logger.debug(f"Total rows found: {len(all_rows)}")
-        if len(all_rows) > 0:
-            logger.debug(f"Sample row: {all_rows[0].get_text()[:200]}")
-        return {"success": False, "message": f"Job ID {job_id} not found"}
-    
-    # Extract all cells from the row
-    cells = job_row.find_all("td")
-    
-    if len(cells) < 10:
-        logger.warning(f"Incomplete data for Job ID {job_id}")
-        return {"success": False, "message": f"Incomplete data for Job ID {job_id}"}
-    
-    try:
-        # Parse the data based on the table structure from the image
-        job_data = {
-            "success": True,
-            "job_id": cells[0].get_text(strip=True) if len(cells) > 0 else job_id,
-            "account": cells[1].get_text(strip=True) if len(cells) > 1 else "",
-            "node_id": cells[2].get_text(strip=True) if len(cells) > 2 else "",
-            "result_type": cells[3].get_text(strip=True) if len(cells) > 3 else "",
-            "profile": cells[4].get_text(strip=True) if len(cells) > 4 else "",
-            "date_uploaded": cells[5].get_text(strip=True) if len(cells) > 5 else "",
-            "date_measured": cells[6].get_text(strip=True) if len(cells) > 6 else "",
-            "type": cells[7].get_text(strip=True) if len(cells) > 7 else "",
-            "serial_number": cells[8].get_text(strip=True) if len(cells) > 8 else "",
-            "org_chart": cells[9].get_text(strip=True) if len(cells) > 9 else "",
-            "technician": cells[10].get_text(strip=True) if len(cells) > 10 else "",
-            "company": cells[11].get_text(strip=True) if len(cells) > 11 else "",
-            "organization": cells[12].get_text(strip=True) if len(cells) > 12 else "",
-            "status": cells[13].get_text(strip=True) if len(cells) > 13 else "",
-        }
-        
-        # Try to extract component status from status icons
-        status_cell = cells[13] if len(cells) > 13 else None
-        if status_cell:
-            # Look for status indicators (green checkmarks, red X, etc.)
-            status_text = status_cell.get_text(strip=True)
-            job_data["overall_status"] = "PASS" if "Pass" in status_text else status_text
-            
-            # Extract component statuses
-            components = {}
-            status_abbrevs = status_cell.find_all(text=True)
-            for abbrev in status_abbrevs:
-                abbrev_clean = abbrev.strip()
-                if abbrev_clean in ["T", "G", "C", "P", "CRF", "TDR", "CPE"]:
-                    # Check if it's marked as passed (you may need to check for specific classes or icons)
-                    components[abbrev_clean] = "✅ Passed"
-            
-            job_data["components"] = components if components else {
-                "tap": "✅ Passed",
-                "gnb_BI": "✅ Passed", 
-                "Cpe": "✅ Passed",
-                "Pressure test": "➖ Missing",
-                "TDR": "➖ Missing"
-            }
-        
-        logger.info(f"Successfully parsed Job ID {job_id}")
-        return job_data
-        
-    except Exception as e:
-        logger.exception(f"Error parsing job data: {e}")
-        return {"success": False, "message": f"Error parsing job data: {str(e)}"}
-
-
-def extract_detailed_status(page) -> dict:
-    """
-    Try to extract more detailed component status if available
-    by clicking on the job row or checking status indicators.
-    """
-    try:
-        # Look for status indicators on the page
-        components = {}
-        
-        # These are based on the first image showing component statuses
-        status_elements = page.locator('[class*="status"], [class*="component"]').all()
-        
-        for elem in status_elements:
-            text = elem.text_content()
-            if text:
-                if "tap" in text.lower():
-                    components["tap"] = "✅ Passed" if "pass" in text.lower() else "❌ Failed"
-                elif "gnb" in text.lower() or "bi" in text.lower():
-                    components["gnb_BI"] = "✅ Passed" if "pass" in text.lower() else "❌ Failed"
-                elif "cpe" in text.lower():
-                    components["Cpe"] = "✅ Passed" if "pass" in text.lower() else "❌ Failed"
-                elif "pressure" in text.lower():
-                    components["Pressure test"] = "✅ Passed" if "pass" in text.lower() else "➖ Missing"
-                elif "tdr" in text.lower():
-                    components["TDR"] = "✅ Passed" if "pass" in text.lower() else "➖ Missing"
-        
-        return components
-    except Exception as e:
-        logger.warning(f"Could not extract detailed status: {e}")
-        return {}
-
-
-# -----------------------------------------
-# Playwright automation logic
+# Main Search Function
 # -----------------------------------------
 def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
     """
-    Logs in to VeEX portal using Playwright, navigates to result page,
-    and searches for the given job ID.
+    Logs in to VeEX portal using Playwright, searches for job ID, and extracts data.
     Returns structured job data dictionary.
     """
-    logger.info(f"🚀 Starting Playwright search for Job ID: {job_id}")
+    logger.info(f"Searching for Job ID: {job_id}")
     
     with sync_playwright() as p:
         try:
-            # Launch browser with more realistic settings to avoid detection
+            # Launch browser with anti-detection settings
             browser = p.chromium.launch(
-                headless=True,
+                headless=headless,
                 args=[
                     '--disable-blink-features=AutomationControlled',
                     '--no-sandbox',
@@ -191,7 +53,7 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
                 }
             )
             
-            # Add JavaScript to make the browser look less like a bot
+            # Add JavaScript to make browser look less like a bot
             context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => undefined
@@ -199,387 +61,251 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             """)
             page = context.new_page()
 
-            # Step 1: Go to login page
-            logger.info(f"🌐 Opening login page: {VEEX_LOGIN_URL}")
-            page.goto(VEEX_LOGIN_URL, timeout=timeout)
+            # Go to results page (will redirect to login if needed)
+            page.goto(VEEX_RESULTS_URL, timeout=timeout, wait_until="networkidle")
+            page.wait_for_timeout(10000)
             
-            # Wait for different load states to ensure Angular app loads
-            page.wait_for_load_state("domcontentloaded", timeout=timeout)
-            logger.info("✅ DOM loaded")
+            current_url = page.url
             
-            page.wait_for_load_state("networkidle", timeout=timeout)
-            logger.info("✅ Network idle")
+            username_selectors = [
+                'input[placeholder="Username"]',
+                'input[type="text"]',
+                'input[name="username"]',
+                'input#username',
+                'input[formcontrolname="username"]'
+            ]
             
-            # Give Angular extra time to initialize and render
-            logger.info("⏳ Waiting for Angular to initialize...")
-            page.wait_for_timeout(10000)  # Increased to 10 seconds
-            logger.info("✅ Page loaded, looking for login form...")
+            password_selectors = [
+                'input[placeholder="Password"]',
+                'input[type="password"]',
+                'input[name="password"]',
+                'input#password',
+                'input[formcontrolname="password"]'
+            ]
             
-            # Check if any input fields exist at all
-            all_inputs = page.locator('input').count()
-            logger.info(f"📊 Found {all_inputs} input fields on page")
+            # Try to find username field
+            username_field = None
+            for selector in username_selectors:
+                try:
+                    field = page.locator(selector).first
+                    if field.is_visible(timeout=5000):
+                        username_field = field
+                        logger.info(f"✅ Username field found: {selector}")
+                        break
+                except:
+                    continue
             
-            # Debug: Log page content to see what's actually there
-            page_content = page.content()
-            if 'placeholder="Username"' in page_content:
-                logger.info("✅ Username placeholder found in page HTML")
-            else:
-                logger.warning("⚠️ Username placeholder NOT found in page HTML")
-                # Log first 1000 chars of page to see what we got
-                logger.info(f"Page content preview: {page_content[:1000]}")
-
-            # Step 2: Enter credentials - use placeholder-based selectors
-            logger.info("🔑 Logging in...")
-            
-            # VeEX login form uses placeholder attributes instead of name/id
-            try:
-                # Try multiple selector strategies
-                username_field = None
-                selectors_to_try = [
-                    'input[placeholder="Username"]',
-                    'input[type="text"]',
-                    'input[name="username"]',
-                    'input#username',
-                    'input[formcontrolname="username"]'
-                ]
-                
-                for selector in selectors_to_try:
-                    try:
-                        logger.info(f"Trying selector: {selector}")
-                        field = page.locator(selector).first
-                        field.wait_for(state="attached", timeout=10000)
-                        if field.is_visible():
-                            username_field = field
-                            logger.info(f"✅ Username field found with selector: {selector}")
-                            break
-                    except Exception as sel_error:
-                        logger.info(f"Selector {selector} failed: {sel_error}")
-                        continue
-                
-                if not username_field:
-                    raise Exception("Could not find username field with any selector")
-                
+            # If username field exists, we need to login
+            if username_field:
                 # Fill username
                 username_field.fill(VEEX_USERNAME, timeout=timeout)
-                logger.info("✅ Filled username field")
                 
-                # Try multiple selectors for password
+                # Find and fill password
                 password_field = None
-                password_selectors = [
-                    'input[placeholder="Password"]',
-                    'input[type="password"]',
-                    'input[name="password"]',
-                    'input#password',
-                    'input[formcontrolname="password"]'
-                ]
-                
                 for selector in password_selectors:
                     try:
                         field = page.locator(selector).first
-                        field.wait_for(state="attached", timeout=10000)
-                        if field.is_visible():
+                        if field.is_visible(timeout=5000):
                             password_field = field
-                            logger.info(f"✅ Password field found with selector: {selector}")
                             break
                     except:
                         continue
                 
                 if not password_field:
-                    raise Exception("Could not find password field with any selector")
+                    raise Exception("Could not find password field")
                 
-                # Fill password
                 password_field.fill(VEEX_PASSWORD, timeout=timeout)
-                logger.info("✅ Filled password field")
-                
-                # Submit form by pressing Enter on password field (no button exists)
                 password_field.press("Enter")
-                logger.info("✅ Submitted login form")
+                page.wait_for_timeout(8000)
                 
-            except Exception as e:
-                logger.error(f"Login form error: {e}")
-                raise Exception(f"Failed to fill login form: {str(e)}")
-
-            # Step 3: Wait for navigation after login
-            logger.info("⏳ Waiting for login to complete...")
-            page.wait_for_timeout(5000)  # Give it time to process login
+                current_url = page.url
+                page.wait_for_timeout(3000)
+                
+                # Navigate to Result & Report
+                try:
+                    page.evaluate('''
+                        const element = document.evaluate(
+                            "//*[contains(text(), 'Result & Report')]",
+                            document,
+                            null,
+                            XPathResult.FIRST_ORDERED_NODE_TYPE,
+                            null
+                        ).singleNodeValue;
+                        if (element) element.click();
+                    ''')
+                    page.wait_for_timeout(5000)
+                except:
+                    page.goto("https://charter.veexinc.net/home/result-and-report", timeout=timeout)
+                    page.wait_for_timeout(3000)
+                
+                # Navigate to Results view
+                page.wait_for_timeout(3000)
+                try:
+                    page.evaluate('''
+                        const element = document.evaluate(
+                            "//*[text()='Results']",
+                            document,
+                            null,
+                            XPathResult.FIRST_ORDERED_NODE_TYPE,
+                            null
+                        ).singleNodeValue;
+                        if (element) element.click();
+                    ''')
+                    page.wait_for_timeout(5000)
+                except:
+                    page.goto(VEEX_RESULTS_URL, timeout=timeout)
+                    page.wait_for_timeout(5000)
             
+            # Verify we're on the results page
             current_url = page.url
-            logger.info(f"📍 Current URL after login: {current_url}")
+            if "result" not in current_url.lower():
+                return {
+                    "success": False,
+                    "job_id": job_id,
+                    "message": "Failed to reach results page"
+                }
             
-            # For SPA, the URL might not change, so check for dashboard elements instead
-            logger.info("⏳ Waiting for authentication to complete...")
-            page.wait_for_timeout(8000)  # Increased wait time for session to establish
+            # Wait for page content to load
+            page.wait_for_timeout(15000)
             
-            # Take a screenshot of what we see after login (for debugging)
+            # Search for the Job ID
+            search_inputs = page.locator('input[type="text"], input[type="search"], input:not([type])')
+            input_count = search_inputs.count()
+            
+            if input_count > 0:
+                for i in range(input_count):
+                    try:
+                        input_field = search_inputs.nth(i)
+                        if input_field.is_visible():
+                            input_field.fill(job_id)
+                            page.wait_for_timeout(1000)
+                            input_field.press("Enter")
+                            page.wait_for_timeout(5000)
+                            break
+                    except:
+                        continue
+            
+            page.wait_for_timeout(10000)
+            
+            # Extract data from page
+            page_text = page.text_content('body')
+            
+            if job_id in page_text:
+                try:
+                    job_elements = page.locator(f'text="{job_id}"').all()
+                    
+                    if len(job_elements) > 0:
+                        first_element = job_elements[0]
+                        parent_row = first_element.locator('xpath=ancestor::tr').first
+                        
+                        if parent_row.is_visible():
+                            cells = parent_row.locator('td, th').all()
+                            cell_values = [cell.text_content().strip() for cell in cells]
+                            
+                            # Parse component status from result string
+                            # Format: "Pass CRF: - |E: P |R: - |B: P |O: P |P: -"
+                            component_status = {}
+                            overall_status = "UNKNOWN"
+                            
+                            if len(cell_values) > 24:
+                                result_string = cell_values[24]
+                                
+                                # Extract overall status (Pass/Fail at the beginning)
+                                if result_string.startswith("Pass"):
+                                    overall_status = "PASS"
+                                elif result_string.startswith("Fail"):
+                                    overall_status = "FAIL"
+                                
+                                # Remove the "Pass" or "Fail" prefix from result_string before parsing
+                                if result_string.startswith("Pass "):
+                                    result_string = result_string[5:]  # Remove "Pass "
+                                elif result_string.startswith("Fail "):
+                                    result_string = result_string[5:]  # Remove "Fail "
+                                
+                                # Parse component results
+                                # CRF/C: Cable RF/tap, E: EPON/gnb_BI, R: RFoG, B: Bulkhead, O: ONU, P: Pressure
+                                parts = result_string.split("|")
+                                for part in parts:
+                                    part = part.strip()
+                                    if ":" in part:
+                                        key, value = part.split(":", 1)
+                                        key = key.strip()
+                                        value = value.strip()
+                                        
+                                        # Map abbreviations to full names
+                                        key_map = {
+                                            "CRF": "tap",
+                                            "C": "tap",
+                                            "E": "gnb_BI",
+                                            "R": "RFoG",
+                                            "B": "Cpe",  # Changed from gnb_BI to Cpe
+                                            "O": "ONU",
+                                            "P": "Pressure test"
+                                        }
+                                        
+                                        full_key = key_map.get(key, key)
+                                        
+                                        # Map values
+                                        if value == "P":
+                                            component_status[full_key] = "✅ Passed"
+                                        elif value == "F":
+                                            component_status[full_key] = "❌ Failed"
+                                        elif value == "-" or value == "N/A":
+                                            component_status[full_key] = "➖ Missing"
+                                        else:
+                                            component_status[full_key] = value
+                            
+                            # Add TDR and CPE if not found
+                            if "Cpe" not in component_status:
+                                # Check if CPE info is in other cells
+                                component_status["Cpe"] = "➖ Missing"
+                            if "TDR" not in component_status:
+                                component_status["TDR"] = "➖ Missing"
+                            
+                            # Return structured data with correct mapping
+                            job_data = {
+                                "success": True,
+                                "job_id": job_id,
+                                "message": f"Job ID {job_id} found successfully",
+                                "raw_data": cell_values,
+                                "overall_status": overall_status,
+                                "account": cell_values[2] if len(cell_values) > 2 else "",  # Account
+                                "cable_type": cell_values[7] if len(cell_values) > 7 else "",  # Profile/Cable Type
+                                "date_uploaded": cell_values[5] if len(cell_values) > 5 else "",  # Date uploaded ID
+                                "test_type": cell_values[6] if len(cell_values) > 6 else "",  # Test type
+                                "date_measured": cell_values[10] if len(cell_values) > 10 else "",  # Date measured
+                                "test_set": cell_values[11] if len(cell_values) > 11 else "",  # Test set/Company
+                                "technician": cell_values[10] if len(cell_values) > 10 else "",  # Technician time
+                                "component_status": component_status
+                            }
+                            
+                            return job_data
+                            
+                except Exception as e:
+                    logger.error(f"Extraction error: {e}")
+                
+                return {
+                    "success": True,
+                    "job_id": job_id,
+                    "message": f"Job ID {job_id} found but extraction incomplete"
+                }
+            else:
+                return {
+                    "success": False,
+                    "job_id": job_id,
+                    "message": f"Job ID {job_id} not found"
+                }
+                
+        except Exception as e:
+            logger.error(f"Scraping error: {e}")
+            return {
+                "success": False,
+                "job_id": job_id,
+                "message": "Error during scraping",
+                "error": str(e)
+            }
+        finally:
             try:
-                page_html = page.content()
-                if 'dashboard' in page_html.lower() or 'logout' in page_html.lower() or 'menu' in page_html.lower():
-                    logger.info("✅ Authenticated - found dashboard elements")
-                else:
-                    logger.warning("⚠️ Dashboard elements not clear, but proceeding...")
+                browser.close()
             except:
                 pass
-
-            # Step 4: Navigate using Angular router (since clicking and goto don't work)
-            logger.info("📄 Navigating to results page using Angular router...")
-            
-            try:
-                # Method 1: Try to use Angular's router directly via JavaScript
-                logger.info("� Attempting navigation via Angular router...")
-                page.evaluate("""
-                    // Try to navigate using Angular router
-                    const navigateToResults = () => {
-                        // Check if Angular router is available
-                        if (window.ng && window.ng.probe) {
-                            const router = window.ng.probe(document.body).injector.get('Router');
-                            router.navigate(['/home/result-and-report/view']);
-                            return true;
-                        }
-                        // Alternative: Try direct window navigation
-                        window.location.hash = '/home/result-and-report/view';
-                        return false;
-                    };
-                    navigateToResults();
-                """)
-                logger.info("✅ Executed Angular navigation command")
-                page.wait_for_timeout(10000)  # Wait for navigation to complete
-                
-                # Check if navigation worked
-                current_url = page.url
-                logger.info(f"📍 URL after Angular navigation: {current_url}")
-                
-                # If URL contains the results route, we're on the right page
-                if "result" in current_url.lower():
-                    logger.info("✅ Navigation successful - on results page")
-                    
-                    # Now wait for content to actually load - Angular needs time
-                    logger.info("⏳ Waiting for table content to render...")
-                    page.wait_for_timeout(15000)  # Initial wait
-                    
-                    # CRITICAL: Look for and handle pagination/infinite scroll/load more buttons
-                    logger.info("🔍 Looking for data loading mechanisms...")
-                    
-                    # Try to find and click "Load More", "Show All", pagination, etc.
-                    load_more_selectors = [
-                        'button:has-text("Load More")',
-                        'button:has-text("Show All")',
-                        'button:has-text("View All")',
-                        'a:has-text("Load More")',
-                        '[class*="load-more"]',
-                        '[class*="show-all"]',
-                        'button[class*="pagination"]',
-                        '.pagination a:last-child',  # Last page button
-                        'button:has-text("100")',  # Items per page = 100
-                        'select option:has-text("100")',  # Dropdown to show 100 items
-                    ]
-                    
-                    for selector in load_more_selectors:
-                        try:
-                            elements = page.locator(selector)
-                            count = elements.count()
-                            if count > 0:
-                                logger.info(f"Found '{selector}' - clicking...")
-                                elements.first.click()
-                                page.wait_for_timeout(5000)
-                                logger.info(f"✅ Clicked {selector}")
-                        except Exception as e:
-                            pass
-                    
-                    # Scroll multiple times to trigger infinite scroll
-                    logger.info("📜 Scrolling to trigger infinite scroll/lazy loading...")
-                    for scroll_attempt in range(5):
-                        try:
-                            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            page.wait_for_timeout(3000)
-                            logger.info(f"Scroll {scroll_attempt + 1}/5")
-                        except:
-                            pass
-                    
-                    # Scroll back to top
-                    try:
-                        page.evaluate("window.scrollTo(0, 0)")
-                        page.wait_for_timeout(2000)
-                    except:
-                        pass
-                    
-                    logger.info("✅ Completed loading triggers")
-                    
-                    # Final long wait for all data to load
-                    page.wait_for_timeout(10000)
-                
-                # If still on root, try direct goto as last resort
-                elif current_url == "https://charter.veexinc.net/":
-                    logger.warning("⚠️ Angular navigation didn't work, trying direct URL...")
-                    page.goto(VEEX_RESULTS_URL, wait_until="domcontentloaded", timeout=timeout)
-                    page.wait_for_timeout(20000)  # Longer wait
-                    
-                    # Check URL again
-                    current_url = page.url
-                    logger.info(f"📍 URL after direct navigation: {current_url}")
-                
-            except Exception as e:
-                logger.error(f"❌ Navigation error: {e}")
-                # Last resort - try dashboard then results
-                logger.info("🔄 Trying dashboard first...")
-                page.goto(VEEX_DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout)
-                page.wait_for_timeout(8000)
-                page.goto(VEEX_RESULTS_URL, wait_until="domcontentloaded", timeout=timeout)
-                page.wait_for_timeout(20000)
-            
-            # Wait for table to load - try multiple times with different selectors
-            table_loaded = False
-            table_selectors = ['table', 'mat-table', 'div[role="table"]', '.table', '[class*="table"]']
-            for selector in table_selectors:
-                try:
-                    page.wait_for_selector(selector, timeout=15000)
-                    logger.info(f"✅ Table loaded (selector: {selector})")
-                    table_loaded = True
-                    break
-                except:
-                    continue
-            
-            if not table_loaded:
-                logger.warning("⚠ Could not detect table element with any selector")
-            
-            # Additional wait for dynamic content (Angular needs time to render)
-            logger.info("⏳ Waiting for content to fully load...")
-            page.wait_for_timeout(8000)  # Increased wait
-            
-            # Log what we see on the page
-            current_page_url = page.url
-            logger.info(f"📍 Current page URL: {current_page_url}")
-            
-            # Count page elements to see what loaded
-            table_count = page.locator('table').count()
-            tr_count = page.locator('tr').count()
-            td_count = page.locator('td').count()
-            logger.info(f"📊 Page elements: {table_count} tables, {tr_count} rows, {td_count} cells")
-            
-            # Check if we're actually on the results page
-            if table_count == 0:
-                logger.warning("⚠️ No tables found - page may not have loaded correctly")
-                # Get page title and some content for debugging
-                page_title = page.title()
-                logger.info(f"📄 Page title: {page_title}")
-            else:
-                logger.info(f"✅ Found {table_count} table(s) on page")
-            
-            # Try to use search/filter if available - THIS IS CRITICAL
-            logger.info(f"🔍 Attempting to search for Job ID: {job_id}")
-            search_success = False
-            
-            try:
-                # Strategy 1: Look for any visible input fields and try searching
-                all_inputs = page.locator('input[type="text"], input[type="search"], input:not([type])')
-                input_count = all_inputs.count()
-                logger.info(f"Found {input_count} input fields")
-                
-                if input_count > 0:
-                    # Try each input field
-                    for i in range(input_count):
-                        try:
-                            input_field = all_inputs.nth(i)
-                            if input_field.is_visible():
-                                logger.info(f"Trying input field {i+1}/{input_count}")
-                                input_field.fill(job_id)
-                                page.wait_for_timeout(1000)
-                                
-                                # Try pressing Enter
-                                input_field.press("Enter")
-                                page.wait_for_timeout(5000)
-                                logger.info(f"✅ Searched via input {i+1} (Enter key)")
-                                search_success = True
-                                break
-                        except:
-                            continue
-                
-                # Strategy 2: Look for Search button and click it
-                if not search_success:
-                    search_buttons = page.locator('button:has-text("Search"), button[type="submit"], input[type="submit"]')
-                    if search_buttons.count() > 0:
-                        logger.info("Found search button, clicking...")
-                        search_buttons.first.click()
-                        page.wait_for_timeout(5000)
-                        logger.info("✅ Clicked search button")
-                        search_success = True
-                
-                if search_success:
-                    # Wait for search results
-                    logger.info("⏳ Waiting for search results...")
-                    page.wait_for_timeout(10000)
-                else:
-                    logger.info("ℹ️ No search mechanism found, will scan full table")
-                    
-            except Exception as e:
-                logger.warning(f"⚠ Search error: {e}, will scan full table")
-
-            # Step 5: Get page content and parse
-            html = page.content()
-            
-            # Save HTML for debugging if environment variable is set
-            if os.getenv("DEBUG_MODE", "false").lower() == "true":
-                debug_file = f"debug_page_{job_id}.html"
-                with open(debug_file, "w", encoding="utf-8") as f:
-                    f.write(html)
-                logger.info(f"💾 Saved HTML to {debug_file} for debugging")
-            
-            job_data = parse_job_html(job_id, html)
-            
-            # Try to get more detailed status if found
-            if job_data.get("success"):
-                detailed_components = extract_detailed_status(page)
-                if detailed_components:
-                    job_data["components"] = detailed_components
-            
-            browser.close()
-            logger.info("✅ Browser closed successfully")
-            
-            return job_data
-            
-        except Exception as e:
-            logger.exception(f"❌ Error during Playwright search: {e}")
-            if 'browser' in locals():
-                browser.close()
-            return {"success": False, "message": f"Error during search: {str(e)}"}
-
-
-# -----------------------------------------
-# Main function to get job info
-# -----------------------------------------
-def get_job_info(job_id: str) -> dict:
-    """
-    Entry point for WhatsApp bot.
-    Returns structured job data dictionary.
-    """
-    if not VEEX_USERNAME or not VEEX_PASSWORD:
-        logger.error("❌ VeEX credentials not configured")
-        return {
-            "success": False,
-            "message": "VeEX credentials not configured. Please check environment variables."
-        }
-    
-    try:
-        return playwright_search(job_id)
-    except Exception as e:
-        logger.exception(f"❌ Error in get_job_info: {e}")
-        return {"success": False, "message": f"Error fetching job data: {str(e)}"}
-
-
-# -----------------------------------------
-# Local test
-# -----------------------------------------
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    test_job = input("Enter Job ID to search: ").strip()
-    if test_job:
-        result = get_job_info(test_job)
-        print("\n" + "="*50)
-        print("RESULT:")
-        print("="*50)
-        if result.get("success"):
-            for key, value in result.items():
-                print(f"{key}: {value}")
-        else:
-            print(result.get("message", "Unknown error"))
-        print("="*50)
-    print(get_job_info(test_job))

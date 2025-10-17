@@ -4,7 +4,7 @@ import logging
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from app.twilio_client import send_whatsapp_message
-from app.scraper import get_job_info
+from app.scraper import playwright_search
 from app.utils import format_job_response, handle_general_query
 from datetime import datetime
 
@@ -63,7 +63,7 @@ def webhook():
         send_whatsapp_message(from_number, f"🔍 Searching for Job ID: {job_id}\n⏳ Please wait...")
 
         try:
-            job_data = get_job_info(job_id)
+            job_data = playwright_search(job_id, headless=True)
             
             if job_data and job_data.get("success"):
                 msg = format_job_response(job_id, job_data)

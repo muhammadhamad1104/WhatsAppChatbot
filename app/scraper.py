@@ -300,16 +300,22 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
                 raise Exception(f"Failed to fill login form: {str(e)}")
 
             # Step 3: Wait for navigation after login
-            try:
-                page.wait_for_url("**/home/dashboard", timeout=timeout)
-                logger.info("✅ Login successful!")
-            except PlaywrightTimeout:
-                logger.warning("⚠ Dashboard URL not detected, checking for login success...")
-                # Check if we're logged in by looking for a logout button or user menu
-                if page.locator('text=Logout').count() > 0 or page.locator('[class*="user"]').count() > 0:
-                    logger.info("✅ Login appears successful based on page elements")
-                else:
-                    raise Exception("Login failed - could not verify successful authentication")
+            logger.info("⏳ Waiting for login to complete...")
+            page.wait_for_timeout(5000)  # Give it time to process login
+            
+            current_url = page.url
+            logger.info(f"📍 Current URL after login: {current_url}")
+            
+            # Check if we're still on login page (login failed)
+            if 'login' in current_url.lower():
+                logger.error("❌ Still on login page - credentials may be incorrect")
+                page_text = page.content()[:500]
+                logger.error(f"Page content: {page_text}")
+                raise Exception("Login failed - still on login page")
+            
+            # If we got redirected anywhere else, assume login success
+            logger.info("✅ Login successful - redirected from login page!")
+
 
             # Step 4: Navigate to results view by CLICKING (SPA navigation, not page.goto)
             logger.info("📄 Opening results page...")

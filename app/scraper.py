@@ -320,28 +320,52 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             except:
                 pass
 
-            # Step 4: Go DIRECTLY to results page URL (don't try clicking navigation)
-            logger.info("📄 Navigating directly to results page URL...")
-            logger.info(f"🔗 Going to: {VEEX_RESULTS_URL}")
+            # Step 4: Navigate using Angular router (since clicking and goto don't work)
+            logger.info("📄 Navigating to results page using Angular router...")
             
             try:
-                # Navigate to results page - the session cookies should be set by now
-                page.goto(VEEX_RESULTS_URL, wait_until="networkidle", timeout=timeout)
-                logger.info("✅ Navigated to results page")
+                # Method 1: Try to use Angular's router directly via JavaScript
+                logger.info("� Attempting navigation via Angular router...")
+                page.evaluate("""
+                    // Try to navigate using Angular router
+                    const navigateToResults = () => {
+                        // Check if Angular router is available
+                        if (window.ng && window.ng.probe) {
+                            const router = window.ng.probe(document.body).injector.get('Router');
+                            router.navigate(['/home/result-and-report/view']);
+                            return true;
+                        }
+                        // Alternative: Try direct window navigation
+                        window.location.hash = '/home/result-and-report/view';
+                        return false;
+                    };
+                    navigateToResults();
+                """)
+                logger.info("✅ Executed Angular navigation command")
+                page.wait_for_timeout(10000)  # Wait for navigation to complete
                 
-                # Wait extra time for Angular to render
-                page.wait_for_timeout(10000)
-                logger.info("✅ Waited for page to render")
+                # Check if navigation worked
+                current_url = page.url
+                logger.info(f"📍 URL after Angular navigation: {current_url}")
+                
+                # If still on root, try direct goto as last resort
+                if current_url == "https://charter.veexinc.net/" or "result" not in current_url.lower():
+                    logger.warning("⚠️ Angular navigation didn't work, trying direct URL...")
+                    page.goto(VEEX_RESULTS_URL, wait_until="domcontentloaded", timeout=timeout)
+                    page.wait_for_timeout(15000)  # Longer wait
+                    
+                    # Check URL again
+                    current_url = page.url
+                    logger.info(f"📍 URL after direct navigation: {current_url}")
                 
             except Exception as e:
-                logger.error(f"❌ Failed to navigate to results page: {e}")
-                # Take another approach - try the dashboard first
+                logger.error(f"❌ Navigation error: {e}")
+                # Last resort - try dashboard then results
                 logger.info("🔄 Trying dashboard first...")
-                page.goto(VEEX_DASHBOARD_URL, wait_until="networkidle", timeout=timeout)
-                page.wait_for_timeout(5000)
-                # Then try results
-                page.goto(VEEX_RESULTS_URL, wait_until="networkidle", timeout=timeout)
-                page.wait_for_timeout(10000)
+                page.goto(VEEX_DASHBOARD_URL, wait_until="domcontentloaded", timeout=timeout)
+                page.wait_for_timeout(8000)
+                page.goto(VEEX_RESULTS_URL, wait_until="domcontentloaded", timeout=timeout)
+                page.wait_for_timeout(15000)
             
             # Wait for table to load - be more specific
             try:

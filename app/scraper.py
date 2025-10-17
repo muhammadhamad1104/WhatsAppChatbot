@@ -307,50 +307,41 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             logger.info(f"📍 Current URL after login: {current_url}")
             
             # For SPA, the URL might not change, so check for dashboard elements instead
-            logger.info("⏳ Waiting for dashboard to load...")
-            page.wait_for_timeout(5000)  # Give dashboard time to render
+            logger.info("⏳ Waiting for authentication to complete...")
+            page.wait_for_timeout(8000)  # Increased wait time for session to establish
             
-            # Look for navigation menu or dashboard elements
-            nav_visible = page.locator('nav, [role="navigation"], .navigation, .menu').count() > 0
-            if nav_visible:
-                logger.info("✅ Dashboard loaded - navigation menu found")
-            else:
-                logger.warning("⚠️ No navigation menu found, but proceeding...")
+            # Take a screenshot of what we see after login (for debugging)
+            try:
+                page_html = page.content()
+                if 'dashboard' in page_html.lower() or 'logout' in page_html.lower() or 'menu' in page_html.lower():
+                    logger.info("✅ Authenticated - found dashboard elements")
+                else:
+                    logger.warning("⚠️ Dashboard elements not clear, but proceeding...")
+            except:
+                pass
 
-            # Step 4: Navigate to results view by CLICKING (SPA navigation, not page.goto)
-            logger.info("📄 Opening results page...")
+            # Step 4: Go DIRECTLY to results page URL (don't try clicking navigation)
+            logger.info("📄 Navigating directly to results page URL...")
+            logger.info(f"🔗 Going to: {VEEX_RESULTS_URL}")
             
-            # Try multiple variations of the "View Result List" link
-            result_list_selectors = [
-                'text="View Result List"',
-                'text="Result List"',
-                'text="Results"',
-                'a:has-text("View Result List")',
-                'a:has-text("Result")',
-                '[href*="result"]',
-                '[href*="Result"]'
-            ]
-            
-            clicked = False
-            for selector in result_list_selectors:
-                try:
-                    logger.info(f"Trying to click: {selector}")
-                    element = page.locator(selector).first
-                    element.wait_for(state="visible", timeout=10000)
-                    element.click()
-                    page.wait_for_timeout(5000)  # Wait for Angular to load content
-                    logger.info(f"✅ Clicked '{selector}'")
-                    clicked = True
-                    break
-                except Exception as e:
-                    logger.info(f"Selector {selector} failed: {str(e)[:100]}")
-                    continue
-            
-            if not clicked:
-                logger.warning("⚠ Could not click any navigation link, trying direct URL...")
-                page.goto(VEEX_RESULTS_URL, timeout=timeout)
-                page.wait_for_load_state("networkidle")
+            try:
+                # Navigate to results page - the session cookies should be set by now
+                page.goto(VEEX_RESULTS_URL, wait_until="networkidle", timeout=timeout)
+                logger.info("✅ Navigated to results page")
+                
+                # Wait extra time for Angular to render
+                page.wait_for_timeout(10000)
+                logger.info("✅ Waited for page to render")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to navigate to results page: {e}")
+                # Take another approach - try the dashboard first
+                logger.info("🔄 Trying dashboard first...")
+                page.goto(VEEX_DASHBOARD_URL, wait_until="networkidle", timeout=timeout)
                 page.wait_for_timeout(5000)
+                # Then try results
+                page.goto(VEEX_RESULTS_URL, wait_until="networkidle", timeout=timeout)
+                page.wait_for_timeout(10000)
             
             # Wait for table to load - be more specific
             try:
@@ -361,7 +352,26 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             
             # Additional wait for dynamic content (Angular needs time to render)
             logger.info("⏳ Waiting for content to fully load...")
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(8000)  # Increased wait
+            
+            # Log what we see on the page
+            current_page_url = page.url
+            logger.info(f"📍 Current page URL: {current_page_url}")
+            
+            # Count page elements to see what loaded
+            table_count = page.locator('table').count()
+            tr_count = page.locator('tr').count()
+            td_count = page.locator('td').count()
+            logger.info(f"📊 Page elements: {table_count} tables, {tr_count} rows, {td_count} cells")
+            
+            # Check if we're actually on the results page
+            if table_count == 0:
+                logger.warning("⚠️ No tables found - page may not have loaded correctly")
+                # Get page title and some content for debugging
+                page_title = page.title()
+                logger.info(f"📄 Page title: {page_title}")
+            else:
+                logger.info(f"✅ Found {table_count} table(s) on page")
             
             # Try to use search/filter if available
             try:
@@ -375,7 +385,7 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
                         # Use the last input (usually the main search)
                         search_inputs.last.fill(job_id)
                         search_button.first.click()
-                        page.wait_for_timeout(3000)
+                        page.wait_for_timeout(5000)  # Increased wait for search results
                         logger.info("✅ Search completed")
                 else:
                     logger.info("ℹ️ No search button found, will scan full table")

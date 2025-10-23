@@ -170,24 +170,138 @@ def playwright_search(job_id: str, headless=True, timeout=60000) -> dict:
             # Wait for page content to load
             page.wait_for_timeout(15000)
             
-            # Search for the Job ID
-            search_inputs = page.locator('input[type="text"], input[type="search"], input:not([type])')
-            input_count = search_inputs.count()
+            # Look for search/filter controls
+            logger.info("Looking for search controls and filters...")
             
-            if input_count > 0:
-                for i in range(input_count):
+            # First, scroll down to see the search controls at the bottom
+            logger.info("Scrolling to bottom to find search controls...")
+            page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+            page.wait_for_timeout(2000)
+            
+            # Take screenshot before search
+            if not headless:
+                try:
+                    page.screenshot(path="before_search.png")
+                    logger.info("Screenshot saved: before_search.png")
+                except:
+                    pass
+            
+            # First, find and select "Job ID" from the "Search By" dropdown
+            try:
+                logger.info("Looking for 'Search By' dropdown...")
+                # The search by dropdown should be near the bottom of the page
+                search_by_select = page.locator('select').first
+                if search_by_select.is_visible():
+                    # Select "Job ID" option
+                    search_by_select.select_option(label="Job ID")
+                    logger.info("Selected 'Job ID' from Search By dropdown")
+                    page.wait_for_timeout(1000)
+                else:
+                    logger.warning("Search By dropdown not visible")
+            except Exception as e:
+                logger.error(f"Error selecting Job ID filter: {e}")
+            
+            # Find the search input field (should be visible after selecting Job ID)
+            logger.info("Looking for search input field...")
+            try:
+                # Look for all text inputs and find enabled ones
+                all_inputs = page.locator('input[type="text"]').all()
+                logger.info(f"Found {len(all_inputs)} text input fields")
+                
+                # Try the last visible AND enabled input (likely the search field)
+                search_input = None
+                for idx, inp in enumerate(reversed(all_inputs)):
                     try:
-                        input_field = search_inputs.nth(i)
-                        if input_field.is_visible():
-                            input_field.fill(job_id)
-                            page.wait_for_timeout(1000)
-                            input_field.press("Enter")
-                            page.wait_for_timeout(5000)
+                        if inp.is_visible() and inp.is_enabled():
+                            search_input = inp
+                            logger.info(f"Found enabled input at reverse index {idx}")
                             break
                     except:
                         continue
+                
+                if search_input:
+                    # Click to focus
+                    search_input.click()
+                    page.wait_for_timeout(500)
+                    # Clear any existing value
+                    search_input.fill("")
+                    page.wait_for_timeout(500)
+                    # Fill with Job ID
+                    search_input.fill(job_id)
+                    logger.info(f"Filled Job ID '{job_id}' into search field")
+                    page.wait_for_timeout(2000)
+                else:
+                    logger.warning("No enabled search input found")
+            except Exception as e:
+                logger.error(f"Error filling search input: {e}")
             
-            page.wait_for_timeout(10000)
+            # Click the Search button
+            logger.info("Looking for Search button...")
+            try:
+                search_button = page.locator('button:has-text("Search")').first
+                if search_button.is_visible():
+                    search_button.click()
+                    logger.info("Clicked Search button")
+                    page.wait_for_timeout(10000)  # Wait for search results to load
+                    
+                    # Check if we got results
+                    current_url = page.url
+                    logger.info(f"Current URL after search: {current_url}")
+                    
+                    # Take screenshot for debugging
+                    if not headless:
+                        try:
+                            page.screenshot(path="after_search.png")
+                            logger.info("Screenshot saved: after_search.png")
+                        except:
+                            pass
+                else:
+                    logger.warning("Search button not visible")
+            except Exception as e:
+                logger.error(f"Error clicking search button: {e}")
+            
+            page.wait_for_timeout(3000)
+            
+            # Scroll to load all content
+            logger.info("Scrolling page to load all results...")
+            for _ in range(5):  # Scroll 5 times to load more content
+                page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+                page.wait_for_timeout(2000)
+            
+            # Scroll back to top
+            page.evaluate('window.scrollTo(0, 0)')
+            page.wait_for_timeout(2000)
+            
+            # Try to find Job ID in table rows directly
+            logger.info(f"Looking for Job ID {job_id} in table rows...")
+            all_rows = page.locator('table tr').all()
+            logger.info(f"Found {len(all_rows)} table rows")
+            
+            # Print first 3 data rows to see what's in the table
+            for idx in range(min(5, len(all_rows))):
+                row_text = all_rows[idx].text_content()
+                logger.info(f"Row {idx}: {row_text[:150]}")
+            
+            found_in_row = False
+            for idx, row in enumerate(all_rows):
+                row_text = row.text_content()
+                if job_id in row_text:
+                    logger.info(f"✅ Found Job ID in row {idx}: {row_text[:100]}")
+                    found_in_row = True
+                    break
+            
+            if not found_in_row:
+                logger.warning(f"Job ID {job_id} not found in any of {len(all_rows)} table rows")
+                logger.info("Checking if search field worked - looking at visible Job IDs...")
+                # Get all text content from first 10 data rows
+                sample_ids = []
+                for idx in range(min(10, len(all_rows))):
+                    cells = all_rows[idx].locator('td').all()
+                    if len(cells) > 0:
+                        first_cell = cells[0].text_content().strip()
+                        if first_cell and len(first_cell) > 10:
+                            sample_ids.append(first_cell)
+                logger.info(f"Sample Job IDs on page: {sample_ids[:5]}")
             
             # Extract data from page
             page_text = page.text_content('body')

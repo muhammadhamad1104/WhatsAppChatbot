@@ -37,6 +37,14 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+test_*.py
+debug_*.py
+*_test.py
+
+# Screenshots and debug files
+*.png
+*.jpg
+*.jpeg
 
 # Playwright
 .playwright/
